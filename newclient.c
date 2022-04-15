@@ -7,7 +7,7 @@
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include<ctype.h>
+#include <ctype.h>
 
 #define BUFSIZE 512
 
@@ -20,12 +20,12 @@
  *       is copied
  * return: result of code checking
  **/
-/*bool recv_msg(int sd, int code, char *text) {
+bool recv_msg(int sd, int code, char *text) {
     char buffer[BUFSIZE], message[BUFSIZE];
     int recv_s, recv_code;
 
     // receive the answer
-
+    recv_s = read(sd, buffer, BUFSIZE);
 
     // error checking
     if (recv_s < 0) warn("error receiving data");
@@ -38,7 +38,7 @@
     if(text) strcpy(text, message);
     // boolean test for the code
     return (code == recv_code) ? true : false;
-}*/
+}
 
 /**
  * function: send command formated to the server
@@ -46,7 +46,7 @@
  * operation: four letters command
  * param: command parameters
  **/
-/*void send_msg(int sd, char *operation, char *param) {
+void send_msg(int sd, char *operation, char *param) {
     char buffer[BUFSIZE] = "";
 
     // command formating
@@ -55,55 +55,63 @@
     else
         sprintf(buffer, "%s\r\n", operation);
 
-    // send command and check for errors
-
-}*/
+    // Escribe el comando y chequea errores
+    write(sd, buffer, strlen(buffer)+1);
+    return;
+}
 
 /**
  * function: simple input from keyboard
  * return: input without ENTER key
  **/
-/*char * read_input() {
+char * read_input() {
     char *input = malloc(BUFSIZE);
     if (fgets(input, BUFSIZE, stdin)) {
         return strtok(input, "\n");
     }
     return NULL;
-}*/
+}
 
 /**
  * function: login process from the client side
  * sd: socket descriptor
  **/
-/*void authenticate(int sd) {
-    char *input, desc[100];
-    int code;
+void authenticate(int sd) {
+    char *input;
+    //char desc[100];
+    //int code;
 
     // ask for user
     printf("username: ");
     input = read_input();
 
     // send the command to the server
-    
+    send_msg(sd, "USER", input);
+
     // relese memory
     free(input);
 
     // wait to receive password requirement and check for errors
-
+    if(!recv_msg(sd, 331, NULL)){
+        printf("Usuario incorrecto\n");
+    }
 
     // ask for password
     printf("passwd: ");
     input = read_input();
 
     // send the command to the server
-
+    send_msg(sd, "PASS", input);
 
     // release memory
     free(input);
 
     // wait for answer and process it and check for errors
-
-}*/
+    if(recv_msg(sd, 530, NULL))
+        printf("Error de conexion de usuario y contrasenia\n");
+    return;
+    
+}
 
 /**
  * function: operation get
@@ -141,7 +149,7 @@
  * function: operation quit
  * sd: socket descriptor
  **/
-/*void quit(int sd) {
+void quit(int sd) {
      // Enviar comando QUIT del cliente
     send_msg(sd, "QUIT", NULL);
     // recibir respuesta del servidor
@@ -149,7 +157,7 @@
         errx(10, "Incorrect logout");
     return;
 
-}*/
+}
 
 /**
  * function: make all operations (get|quit)
@@ -237,24 +245,28 @@ int main (int argc, char *argv[]) {
     }
 
     // Creo un socket y chequeo errores
-     if((sd = socket(AF_INET, SOCK_STREAM, 0))<0){
-         printf("Error en la creacion del socket");
-     }
+    sd = socket(AF_INET, SOCK_STREAM, 0);
+    if(sd < 0){
+      printf("Error en la creacion del socket");
+    }
 
     puerto = atoi(argv[2]); // Asignamos el puerto a la variable puerto
-    // Obtenemos datos del servidor    
+    // Obtenemos datos del servidor
     addr.sin_family = AF_INET;
-    addr.sin_port =  htons(puerto); 
+    addr.sin_port = htons(puerto); 
     addr.sin_addr.s_addr = inet_addr(argv[1]);//Direccion
 
     // Conectamos y chequeamos errores
     if(connect(sd, (struct sockaddr*)&addr, sizeof(addr)) < 0){
         printf("Error, no se pudo conectar con el servidor.\n");
-    }    
-    // if receive hello proceed with authenticate and operate if not warning
-    if(read(sd,buffer,sizeof(buffer))<0){
-        printf("No se pudo leer el mensaje del servidor.\n");
     }
+    // if receive hello proceed with authenticate and operate if not warning
+    if(recv_msg(sd, 220, NULL)){
+        authenticate(sd);
+    }else{
+        printf("No se reciben datos del servidor\n");
+    }
+
     // close socket
     close(sd);
 

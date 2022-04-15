@@ -35,15 +35,18 @@
  *             you can check if you receive first USER
  *             and then check if you receive PASS
  **/
-/*bool recv_cmd(int sd, char *operation, char *param) {
+bool recv_cmd(int sd, char *operation, char *param) {
     char buffer[BUFSIZE], *token;
     int recv_s;
 
-    // receive the command in the buffer and check for errors
-
-
-
-    // expunge the terminator characters from the buffer
+    // Recibo los comandos en el buffer y chequeo errores
+    recv_s = read(sd,buffer,BUFSIZE);
+    if(recv_s < 0 || recv==0){
+        printf("Error al leer el buffer o buffer vacio\n");
+        return false;
+    }
+    
+    // Elimino los caracteres de terminacion del buffer
     buffer[strcspn(buffer, "\r\n")] = 0;
 
     // complex parsing of the buffer
@@ -63,7 +66,7 @@
         if (token != NULL) strcpy(param, token);
     }
     return true;
-}*/
+}
 
 /**
  * function: send answer to the client
@@ -73,7 +76,7 @@
  * return: true if not problem arise or else
  * notes: the MSG_x have preformated for these use
  **/
-/*bool send_ans(int sd, char *message, ...){
+bool send_ans(int sd, char *message, ...){
     char buffer[BUFSIZE];
 
     va_list args;
@@ -82,11 +85,12 @@
     vsprintf(buffer, message, args);
     va_end(args);
     // send answer preformated and check errors
-
-
-
-
-}*/
+    if(write(sd, buffer, strlen(buffer))<0){
+        printf("Error de envio de respuesta");
+        return false;
+    }
+    return true;
+}
 
 /**
  * function: RETR operation
@@ -119,41 +123,84 @@
  * pass: user password
  * return: true if found or false if not
  **/
-/*bool check_credentials(char *user, char *pass) {
+bool check_credentials(char *user, char *pass) {
+    // Variables
     FILE *file;
     char *path = "./ftpusers", *line = NULL, cred[100];
     size_t len = 0;
     bool found = false;
 
-    // make the credential string
+    // Hago la cadena de credenciales
+    strcpy(cred, user);
+    strcat(cred, ":");
+    strcat(cred, pass);
+    strcat(cred, "\n");
+    
+    // Chequeo si el archivo ftpusers existe
+    file = fopen(path, "r");
+   /* if(file = NULL){
+        printf("Error al abrir el archivo de usuarios\n");
+    }*/
+    
+    // Busco las cadenas de las credenciales 
+    line = (char *) malloc(100*sizeof(char));//reservo memoria dinamica
+    len = 100;
+    
+    // Leo el archivo linea a linea
+    while(getline(&line, &len, file)>0){
+   // printf("Entre aca porque era mayor a 0\n");
+        if(strcmp(cred, line) == 0){
+           found = true;
+           //printf("Se encontro el usuario\n");
+           break;
+        }
+    }
+    // Cierro el archivo
+    fclose(file);
 
-    // check if ftpusers file it's present
-
-    // search for credential string
-
-    // close file and release any pointes if necessary
-
-    // return search status
-}*/
+    // Retorno el estado de la busqueda
+    printf("%d", found);
+    return found;
+}
 
 /**
  * function: login process management
  * sd: socket descriptor
  * return: true if login is succesfully, false if not
  **/
-/*bool authenticate(int sd) {
+bool authenticate(int sd) {
     char user[PARSIZE], pass[PARSIZE];
 
-    // wait to receive USER action
-
-    // ask for password
-
-    // wait to receive PASS action
-
-    // if credentials don't check denied login
-
-    // confirm login
-}*/
+    // Espero a recibir el usuario
+    if(!recv_cmd(sd, "USER", user)){
+        printf("Error en la espera de la recepcion del usuario\n");
+        return false;
+    }
+    // Pregunto por la contrasenia
+    if(!send_ans(sd, MSG_331, user)){
+        printf("Error al preguntar por la contrasenia\n");
+        return false;
+    }
+    // Espero para recibir la contrasenia
+    if(!recv_cmd(sd, "PASS", pass)){
+        printf("Error al recibir la contrasenia");
+        return false;
+    }
+    // confirmo el login
+    if(check_credentials(user, pass)){
+        if(!send_ans(sd, MSG_230, user)){
+            printf("Error al enviar la confirmacion del ingreso");
+            return false;
+        }
+        printf("User: %s conectado.\n", user);
+        return true;
+    }
+    // Si las credenciales no fueron correctamente chequeadas, devuelvo el acceso denegado
+    if(!send_ans(sd, MSG_530)){
+        printf("Error al enviar el acceso denegado\n");
+        return false;
+    }
+}
 
 /**
  *  function: execute all commands (RETR|QUIT)
@@ -207,14 +254,15 @@ int main (int argc, char *argv[]) {
     struct sockaddr_in masterAddr, servAddr;
     socklen_t s_length;
     int puerto;
+    bool autenti;
     
     // Chequea argumentos de entrada
     if(argc!=2){
-        errx(1, "Error en argumentos");
+        printf("Error en el numero de argumentos");
     }
     // Chequea el puerto
     if(!direccion_puerto(argv[1])){
-        errx(1, "Puerto invalido");
+        printf("Puerto invalido");
     }
     // Creo el socket del servidor y si hay errores
     msd = socket(AF_INET, SOCK_STREAM, 0);
@@ -238,19 +286,23 @@ int main (int argc, char *argv[]) {
         printf("Error en listen");
     }
     
-    // main loop
+    // bucle
     while (true) {
         // Aceptamos conexiones secuencialmente y checkeamos los errores
         s_length = sizeof(servAddr);
-        sd = accept(msd, (struct sockaddr*)&servAddr, &s_length);
-        if(sd < 0){
-            printf("Error de conexion");
+        if((sd = accept(msd, (struct sockaddr*)&servAddr, &s_length)) < 0){
+                printf("Error de conexion en la aceptacion");
         }
-        // send hello
-        strcpy(buffer, MSG_220);
+        // envio mensaje de primera conexion
+        send_ans(sd, MSG_220);
 
-        // operate only if authenticate is true        
-        //close(sd);
+        // Operacion de autenticacion
+        autenti = authenticate(sd);        
+        if(!autenti){
+            printf("Error de autenticacion\n");
+        }
+        // Cierro del lado del cliente
+        close(sd);
     }
 
     // cierro el server socket
