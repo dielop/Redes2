@@ -11,15 +11,198 @@
 
 #define BUFSIZE 512
 
+//Recibe la respuesta del servidor -sd: socket -code:3 numeros para checkear -text: si recibe por parametro se copia la resp.
+bool recv_msg(int, int, char *); 
+
+// Envia msj al servidor -sd: socket -operation: comando de 4 letras -param: parametros.
+void send_msg(int, char *, char *);
+ 
+ // Lee lo ingresado por teclado.
+char * read_input();
+
+// Realiza la autenticacion del usuario.
+void authenticate(int);
+
+bool direccion_IP(char *);
+
+// Verifico que el puerto ingresado sea valido (Digitos y rango).
+bool direccion_puerto(char *);
+
+// Comando quit para terminar la conexion.
+void quit(int);
+
 /**
- * function: receive and analize the answer from the server
+ * function: operation get
  * sd: socket descriptor
- * code: three leter numerical code to check if received
- * text: normally NULL but if a pointer if received as parameter
- *       then a copy of the optional message from the response
- *       is copied
- * return: result of code checking
+ * file_name: file name to get from the server
  **/
+void get(int sd, char *file_name) {
+    char desc[BUFSIZE], buffer[BUFSIZE];
+    int f_size, recv_s, r_size = BUFSIZE;
+    FILE *file;
+    int sock1, sock2, puerto; //socket para transferencias
+    char *ip;
+    ip = (char*)malloc(13*sizeof(char)); //Reservo espacio para la ip
+    struct sockaddr_in addr;
+    socklen_t addr_len = sizeof(addr);//Declaramos una variable que tenga la longitud de la estructura
+
+    puerto = rand()%60000+1024; //Genero un puerto aleatorio mayor a los priv.
+    
+    // Escuchamos en el canal de datos
+    sock1 = socket(AF_INET, SOCK_STREAM, 0);
+    if(sock1 < 0){
+      printf("Error en la creacion del socket");
+    }
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(puerto);
+    // send the RETR command to the server
+    send_msg(sd, "RETR", file_name);
+    
+    // Bind para el canal de transferencias de archivos
+    if (bind(sock1, (struct sockaddr *) &addr, sizeof(addr)) < 0){
+    	printf("No se pudo hacer el bind con el puerto\n");
+    }
+    // Hago el listen para aceptar al servidor
+    if (listen(sock1,1) < 0) {
+    	printf("Error en el canal de datos\n");
+    }
+    
+    // check for the response
+    if(!recv_msg(sock1, 299, buffer)) {
+       close(sock1);
+       return;
+    }
+    // parsing the file size from the answer received
+    // "File %s size %ld bytes"
+    sscanf(buffer, "File %*s size %d bytes", &f_size);
+
+    // open the file to write
+    file = fopen(file_name, "w");
+
+    //receive the file
+     while(true) {
+       if (f_size < BUFSIZE){
+        r_size = f_size;
+       }
+       
+       recv_s = read(sock1, buffer, r_size);
+       
+       if(recv_s < 0){
+        printf("Error\n");
+       }
+       
+       fwrite(buffer, 1, r_size, file);
+       
+       if (f_size < BUFSIZE){
+        break;
+       }
+       
+       f_size = f_size - BUFSIZE;
+    }
+    
+    // Cerrar el canal de datos 
+    close(sock1);
+
+    // close the file
+    fclose(file);
+
+    // receive the OK from the server
+    if(!recv_msg(sd, 226, NULL)){
+     printf("La transferencia no se completo correctamente\n");
+    }
+    
+    return;
+}
+
+
+/**
+ * function: make all operations (get|quit)
+ * sd: socket descriptor
+ **/
+void operate(int sd) {
+    char *input, *op, *param;
+
+    while (true) {
+        printf("Operation: ");
+        input = read_input();
+        if (input == NULL)
+            continue; // avoid empty input
+        op = strtok(input, " ");
+        // free(input);
+        if (strcmp(op, "get") == 0) {
+            param = strtok(NULL, " ");
+            get(sd, param);
+        }
+        else if (strcmp(op, "quit") == 0) {
+            quit(sd);
+            break;
+        }
+        else {
+            // new operations in the future
+            printf("TODO: unexpected command\n");
+        }
+        free(input);
+    }
+    free(input);
+}
+
+
+/**
+ * Corro el cliente con la ip y el puerto donde abro el servidor.
+ *         ./myftp <SERVER_IP> <SERVER_PORT>
+ **/
+int main (int argc, char *argv[]) {
+    char buffer[BUFSIZE];
+    int sd, puerto;
+    struct sockaddr_in addr;
+
+    // Chequeo los argumentos y errores
+    if(argc!=3){
+        printf("Error en cantidad de argumentos");
+    }
+    if(!direccion_IP(argv[1])){
+        printf("Error en ip");
+    }
+    if(!direccion_puerto(argv[2])){
+        printf("Error en puerto");
+    }
+
+    // Creo un socket y chequeo errores
+    sd = socket(AF_INET, SOCK_STREAM, 0);
+    if(sd < 0){
+      printf("Error en la creacion del socket");
+    }
+
+    puerto = atoi(argv[2]); // Asignamos el puerto a la variable puerto
+    // Obtenemos datos del servidor
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(puerto); 
+    addr.sin_addr.s_addr = inet_addr(argv[1]);//Direccion
+
+    // Conectamos y chequeamos errores
+    if(connect(sd, (struct sockaddr*)&addr, sizeof(addr)) < 0){
+        printf("Error, no se pudo conectar con el servidor.\n");
+    }
+    
+    int clientesz = sizeof(addr);
+    getsockname(sd, (struct sockaddr*)&addr, &clientesz);
+    printf("Mi puerto es: %d\n", ntohs(addr.sin_port));
+         
+    // Leemos el mensaje y procedemos con la autenticacion
+    if(recv_msg(sd, 220, NULL)){
+        authenticate(sd);
+        operate(sd);
+    }else{
+        printf("No se reciben datos del servidor\n");
+    }
+
+    // close socket
+    close(sd);
+
+    return 0;
+}
+
 bool recv_msg(int sd, int code, char *text) {
     char buffer[BUFSIZE], message[BUFSIZE];
     int recv_s, recv_code;
@@ -28,9 +211,12 @@ bool recv_msg(int sd, int code, char *text) {
     recv_s = read(sd, buffer, BUFSIZE);
 
     // error checking
-    if (recv_s < 0) warn("error receiving data");
-    if (recv_s == 0) errx(1, "connection closed by host");
-
+    if(recv_s < 0){ 
+     printf("Error al recibir datos");
+    }
+    if(recv_s == 0){ 
+     printf("conexion cerrada por el host");
+    }
     // parsing the code and message receive from the answer
     sscanf(buffer, "%d %[^\r\n]\r\n", &recv_code, message);
     printf("%d %s\n", recv_code, message);
@@ -40,12 +226,6 @@ bool recv_msg(int sd, int code, char *text) {
     return (code == recv_code) ? true : false;
 }
 
-/**
- * function: send command formated to the server
- * sd: socket descriptor
- * operation: four letters command
- * param: command parameters
- **/
 void send_msg(int sd, char *operation, char *param) {
     char buffer[BUFSIZE] = "";
 
@@ -60,10 +240,6 @@ void send_msg(int sd, char *operation, char *param) {
     return;
 }
 
-/**
- * function: simple input from keyboard
- * return: input without ENTER key
- **/
 char * read_input() {
     char *input = malloc(BUFSIZE);
     if (fgets(input, BUFSIZE, stdin)) {
@@ -72,10 +248,6 @@ char * read_input() {
     return NULL;
 }
 
-/**
- * function: login process from the client side
- * sd: socket descriptor
- **/
 void authenticate(int sd) {
     char *input;
     //char desc[100];
@@ -108,87 +280,10 @@ void authenticate(int sd) {
 
     // wait for answer and process it and check for errors
     if(recv_msg(sd, 530, NULL))
-        printf("Error de conexion de usuario y contrasenia\n");
-    return;
-    
+        printf("Login incorrecto/error de autenticacion\n");
+    return;    
 }
 
-/**
- * function: operation get
- * sd: socket descriptor
- * file_name: file name to get from the server
- **/
-/*void get(int sd, char *file_name) {
-    char desc[BUFSIZE], buffer[BUFSIZE];
-    int f_size, recv_s, r_size = BUFSIZE;
-    FILE *file;
-
-    // send the RETR command to the server
-
-    // check for the response
-
-    // parsing the file size from the answer received
-    // "File %s size %ld bytes"
-    sscanf(buffer, "File %*s size %d bytes", &f_size);
-
-    // open the file to write
-    file = fopen(file_name, "w");
-
-    //receive the file
-
-
-
-    // close the file
-    fclose(file);
-
-    // receive the OK from the server
-
-}*/
-
-/**
- * function: operation quit
- * sd: socket descriptor
- **/
-void quit(int sd) {
-     // Enviar comando QUIT del cliente
-    send_msg(sd, "QUIT", NULL);
-    // recibir respuesta del servidor
-    if(!recv_msg(sd, 221, NULL))
-        errx(10, "Incorrect logout");
-    return;
-
-}
-
-/**
- * function: make all operations (get|quit)
- * sd: socket descriptor
- **/
-/*void operate(int sd) {
-    char *input, *op, *param;
-
-    while (true) {
-        printf("Operation: ");
-        input = read_input();
-        if (input == NULL)
-            continue; // avoid empty input
-        op = strtok(input, " ");
-        // free(input);
-        if (strcmp(op, "get") == 0) {
-            param = strtok(NULL, " ");
-            get(sd, param);
-        }
-        else if (strcmp(op, "quit") == 0) {
-            quit(sd);
-            break;
-        }
-        else {
-            // new operations in the future
-            printf("TODO: unexpected command\n");
-        }
-        free(input);
-    }
-    free(input);
-}*/
 bool direccion_IP(char *string){
     char *token;
     bool verificacion = true;
@@ -224,51 +319,11 @@ bool direccion_puerto(char *string){
     return verificacion;
 }
 
-/**
- * Run with
- *         ./myftp <SERVER_IP> <SERVER_PORT>
- **/
-int main (int argc, char *argv[]) {
-    char buffer[BUFSIZE];
-    int sd, puerto;
-    struct sockaddr_in addr;
-
-    // Chequeo los argumentos y errores
-    if(argc!=3){
-        printf("Error en cantidad de argumentos");
-    }
-    if(!direccion_IP(argv[1])){
-        printf("Error en ip");
-    }
-    if(!direccion_puerto(argv[2])){
-        printf("Error en puerto");
-    }
-
-    // Creo un socket y chequeo errores
-    sd = socket(AF_INET, SOCK_STREAM, 0);
-    if(sd < 0){
-      printf("Error en la creacion del socket");
-    }
-
-    puerto = atoi(argv[2]); // Asignamos el puerto a la variable puerto
-    // Obtenemos datos del servidor
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(puerto); 
-    addr.sin_addr.s_addr = inet_addr(argv[1]);//Direccion
-
-    // Conectamos y chequeamos errores
-    if(connect(sd, (struct sockaddr*)&addr, sizeof(addr)) < 0){
-        printf("Error, no se pudo conectar con el servidor.\n");
-    }
-    // if receive hello proceed with authenticate and operate if not warning
-    if(recv_msg(sd, 220, NULL)){
-        authenticate(sd);
-    }else{
-        printf("No se reciben datos del servidor\n");
-    }
-
-    // close socket
-    close(sd);
-
-    return 0;
+void quit(int sd) {
+     // Enviar comando QUIT del cliente
+    send_msg(sd, "QUIT", NULL);
+    // recibir respuesta del servidor
+    if(!recv_msg(sd, 221, NULL))
+        printf("Desconexion incorrecta");
+    return;
 }
